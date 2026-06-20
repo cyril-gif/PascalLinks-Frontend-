@@ -16,43 +16,39 @@ const { generalLimiter } = require('./middleware/rateLimiter');
 const authRoutes = require('./routes/auth');
 const orderRoutes = require('./routes/orders');
 const planRoutes = require('./routes/plans');
-// ... after other imports
 const adminRoutes = require('./routes/admin');
 const webhookRoutes = require('./routes/webhook');
-
-
-// TODO: adminRoutes, webhookRoutes will be added later
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-// server.js
-
-const cors = require('cors');
-
+// ---------- CORS Configuration ----------
 // Allow your Vercel frontend only
 const allowedOrigins = [
   'https://pascallinks.vercel.app',
-  'http://localhost:3000', // for local dev if needed
+  'http://localhost:3000', // for local development if needed
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true, // allow cookies if needed
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: false, // we use JWT in headers, not cookies
+  })
+);
+// -----------------------------------------
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Global rate limiting (optional, we have per-route limiters too)
+// Global rate limiting (optional)
 app.use(generalLimiter);
 
 // Health check
@@ -64,8 +60,8 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/plans', planRoutes);
-app.use('/api/admin', adminRoutes);      // to be added
-app.use('/api/webhook', webhookRoutes);  // to be added
+app.use('/api/admin', adminRoutes);
+app.use('/api/webhook', webhookRoutes);
 
 // 404 handler
 app.use((req, res) => {
