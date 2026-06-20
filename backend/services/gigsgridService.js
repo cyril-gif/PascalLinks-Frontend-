@@ -4,6 +4,7 @@
  * Service module that encapsulates all communication with the Gigsgrid API.
  * Implements caching (10 min) and falls back to mock data if all endpoints fail.
  * The mock data reflects the actual MTN packages from your Gigsgrid dashboard.
+ * Only MTN is supported; other networks return mock MTN data or empty array.
  */
 
 const axios = require('axios');
@@ -56,12 +57,13 @@ class GigsgridService {
   }
 
   /**
-   * Fetch plans for a given network, trying multiple endpoints if needed.
-   * Falls back to mock data if all endpoints fail.
+   * Fetch plans for a given network.
+   * Falls back to mock data for MTN if all API endpoints fail.
+   * For other networks, returns mock MTN data (or empty array) – adjust as needed.
    */
   async getPlans(network) {
     if (!this.apiKey) {
-      console.warn('⚠️ GIGSGRID_API_KEY missing – using mock data.');
+      console.warn('⚠️ GIGSGRID_API_KEY missing – using mock data for MTN.');
       return this.getMockPlans(network);
     }
 
@@ -91,8 +93,8 @@ class GigsgridService {
       return plans;
     }
 
-    // All endpoints failed – use mock data
-    console.warn(`⚠️ All endpoints failed for ${network} – returning mock data.`);
+    // All endpoints failed – use mock data for MTN (or fallback)
+    console.warn(`⚠️ All endpoints failed for ${network} – returning mock MTN data.`);
     return this.getMockPlans(network);
   }
 
@@ -104,7 +106,6 @@ class GigsgridService {
     try {
       const data = await this._request(endpoint, { method: 'GET' });
 
-      // Check if the response indicates an error
       if (data.status === 'error' || data.success === false) {
         console.warn(`⚠️ Endpoint ${endpoint} returned error:`, data.message);
         return null;
@@ -112,24 +113,16 @@ class GigsgridService {
 
       let plans = null;
 
-      // Case 1: Direct array response
       if (Array.isArray(data)) {
         plans = data;
-      }
-      // Case 2: Data wrapped in a 'data' property
-      else if (data.data && Array.isArray(data.data)) {
+      } else if (data.data && Array.isArray(data.data)) {
         plans = data.data;
-      }
-      // Case 3: Data wrapped in a 'plans' property
-      else if (data.plans && Array.isArray(data.plans)) {
+      } else if (data.plans && Array.isArray(data.plans)) {
         plans = data.plans;
-      }
-      // Case 4: Data wrapped in a 'packages' property
-      else if (data.packages && Array.isArray(data.packages)) {
+      } else if (data.packages && Array.isArray(data.packages)) {
         plans = data.packages;
       }
 
-      // Validate and map the plans
       if (plans && plans.length > 0 && plans[0].name && plans[0].price !== undefined) {
         return plans.map(plan => ({
           package_size: plan.name || plan.package_size,
@@ -148,50 +141,42 @@ class GigsgridService {
   }
 
   /**
-   * Mock plans – exactly matches the MTN packages from your screenshot.
-   * Used when the Gigsgrid API is unavailable or returns an error.
+   * Mock plans – only MTN, matching your screenshot.
+   * For non-MTN networks, returns an empty array or you can adjust to return MTN data.
    */
   getMockPlans(network) {
-    const mockPlans = {
-      mtn: [
-        { package_size: '1GB', price: 3.80, name: '1GB' },
-        { package_size: '2GB', price: 7.60, name: '2GB' },
-        { package_size: '3GB', price: 11.40, name: '3GB' },
-        { package_size: '4GB', price: 15.20, name: '4GB' },
-        { package_size: '5GB', price: 19.00, name: '5GB' },
-        { package_size: '6GB', price: 22.80, name: '6GB' },
-        { package_size: '7GB', price: 26.60, name: '7GB' },
-        { package_size: '8GB', price: 30.40, name: '8GB' },
-        { package_size: '9GB', price: 34.20, name: '9GB' },
-        { package_size: '10GB', price: 38.00, name: '10GB' },
-        { package_size: '11GB', price: 41.80, name: '11GB' },
-        { package_size: '12GB', price: 45.60, name: '12GB' },
-        { package_size: '14GB', price: 53.20, name: '14GB' },
-        { package_size: '15GB', price: 57.00, name: '15GB' },
-        { package_size: '18GB', price: 68.40, name: '18GB' },
-        { package_size: '20GB', price: 75.00, name: '20GB' },
-        { package_size: '25GB', price: 94.00, name: '25GB' },
-        { package_size: '30GB', price: 113.00, name: '30GB' },
-        { package_size: '40GB', price: 145.00, name: '40GB' },
-        { package_size: '50GB', price: 180.00, name: '50GB' },
-      ],
-      telecel: [
-        { package_size: '1GB', price: 4.00, name: '1GB' },
-        { package_size: '2GB', price: 8.00, name: '2GB' },
-        { package_size: '5GB', price: 18.00, name: '5GB' },
-      ],
-      airtel_tigo: [
-        { package_size: '1GB', price: 3.50, name: '1GB' },
-        { package_size: '2GB', price: 7.00, name: '2GB' },
-        { package_size: '5GB', price: 16.00, name: '5GB' },
-      ],
-      bigtime: [
-        { package_size: '1GB', price: 3.20, name: '1GB' },
-        { package_size: '2GB', price: 6.40, name: '2GB' },
-        { package_size: '5GB', price: 15.00, name: '5GB' },
-      ],
-    };
-    return mockPlans[network] || mockPlans.mtn;
+    // Only MTN packages
+    const mtnPlans = [
+      { package_size: '1GB', price: 3.80, name: '1GB' },
+      { package_size: '2GB', price: 7.60, name: '2GB' },
+      { package_size: '3GB', price: 11.40, name: '3GB' },
+      { package_size: '4GB', price: 15.20, name: '4GB' },
+      { package_size: '5GB', price: 19.00, name: '5GB' },
+      { package_size: '6GB', price: 22.80, name: '6GB' },
+      { package_size: '7GB', price: 26.60, name: '7GB' },
+      { package_size: '8GB', price: 30.40, name: '8GB' },
+      { package_size: '9GB', price: 34.20, name: '9GB' },
+      { package_size: '10GB', price: 38.00, name: '10GB' },
+      { package_size: '11GB', price: 41.80, name: '11GB' },
+      { package_size: '12GB', price: 45.60, name: '12GB' },
+      { package_size: '14GB', price: 53.20, name: '14GB' },
+      { package_size: '15GB', price: 57.00, name: '15GB' },
+      { package_size: '18GB', price: 68.40, name: '18GB' },
+      { package_size: '20GB', price: 75.00, name: '20GB' },
+      { package_size: '25GB', price: 94.00, name: '25GB' },
+      { package_size: '30GB', price: 113.00, name: '30GB' },
+      { package_size: '40GB', price: 145.00, name: '40GB' },
+      { package_size: '50GB', price: 180.00, name: '50GB' },
+    ];
+
+    // For MTN, return the full list; for others, you can return an empty array or MTN data
+    if (network === 'mtn') {
+      return mtnPlans;
+    } else {
+      // Since we only sell MTN, return an empty array for other networks
+      // (or you could return mtnPlans if you prefer)
+      return [];
+    }
   }
 
   /**
