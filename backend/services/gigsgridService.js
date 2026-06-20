@@ -3,7 +3,6 @@
  * ------------------------------------------------
  * Service module that encapsulates all communication with the Gigsgrid API.
  * Implements caching (10 min) and falls back to legacy endpoints if needed.
- * Uses mock data when all API endpoints fail.
  */
 
 const axios = require('axios');
@@ -21,11 +20,7 @@ class GigsgridService {
     }
   }
 
-  /**
-   * Private request method with authentication.
-   */
   async _request(endpoint, options = {}) {
-    // If endpoint already contains a query string, use it as-is
     const url = endpoint.startsWith('http') ? endpoint : `${this.baseURL}${endpoint}`;
     const headers = {
       'X-API-Key': this.apiKey,
@@ -56,9 +51,6 @@ class GigsgridService {
     }
   }
 
-  /**
-   * Fetch plans for a given network, trying multiple endpoints if needed.
-   */
   async getPlans(network) {
     if (!this.apiKey) {
       console.warn('⚠️ GIGSGRID_API_KEY missing – using mock data.');
@@ -69,7 +61,6 @@ class GigsgridService {
     const cached = planCache.get(cacheKey);
     if (cached) return cached;
 
-    // List of endpoints to try in order
     const endpoints = [
       `/v1/plans/${network}`,
       `/list_plans/${network}`,
@@ -91,8 +82,7 @@ class GigsgridService {
       return plans;
     }
 
-    // All endpoints failed – use mock data
-    console.warn(`⚠️ All Gigsgrid endpoints failed for ${network} – returning mock data.`);
+    console.warn(`⚠️ All endpoints failed for ${network} – returning mock data.`);
     return this.getMockPlans(network);
   }
 
@@ -104,21 +94,41 @@ class GigsgridService {
     try {
       const data = await this._request(endpoint, { method: 'GET' });
 
-      // Check if the response indicates an error
       if (data.status === 'error' || data.success === false) {
         console.warn(`⚠️ Endpoint ${endpoint} returned error:`, data.message);
         return null;
       }
 
-      // Plans are often in data.data or directly in the response
-      let plans = data.data || data;
-      // If it's an object with a 'plans' key, extract that
-      if (plans && plans.plans && Array.isArray(plans.plans)) {
-        plans = plans.plans;
+      let plans = null;
+
+      // Case 1: Direct array response
+      if (Array.isArray(data)) {
+        plans = data;
       }
-      if (Array.isArray(plans) && plans.length > 0) {
-        return plans;
+      // Case 2: Data wrapped in a 'data' property
+      else if (data.data && Array.isArray(data.data)) {
+        plans = data.data;
       }
+      // Case 3: Data wrapped in a 'plans' property
+      else if (data.plans && Array.isArray(data.plans)) {
+        plans = data.plans;
+      }
+      // Case 4: Data wrapped in a 'packages' property
+      else if (data.packages && Array.isArray(data.packages)) {
+        plans = data.packages;
+      }
+
+      // Validate and map the plans
+      if (plans && plans.length > 0 && plans[0].name && plans[0].price !== undefined) {
+        return plans.map(plan => ({
+          package_size: plan.name || plan.package_size,
+          price: parseFloat(plan.price) || 0,
+          name: plan.name || plan.package_size,
+          ...plan
+        }));
+      }
+
+      console.warn(`⚠️ Endpoint ${endpoint} returned data but no valid plans:`, data);
       return null;
     } catch (error) {
       console.warn(`⚠️ Endpoint ${endpoint} failed:`, error.message);
@@ -127,37 +137,28 @@ class GigsgridService {
   }
 
   /**
-   * Mock plans for testing when Gigsgrid is unavailable.
+   * Mock plans for testing (only used if all endpoints fail).
    */
   getMockPlans(network) {
     const mockPlans = {
       mtn: [
-        { package_size: '100MB', price: 2.50, name: 'MTN 100MB' },
-        { package_size: '500MB', price: 8.00, name: 'MTN 500MB' },
-        { package_size: '1GB', price: 12.00, name: 'MTN 1GB' },
-        { package_size: '2GB', price: 20.00, name: 'MTN 2GB' },
-        { package_size: '5GB', price: 45.00, name: 'MTN 5GB' },
+        { package_size: '1GB', price: 3.80, name: '1GB' },
+        { package_size: '2GB', price: 7.60, name: '2GB' },
+        { package_size: '5GB', price: 19.00, name: '5GB' },
+        { package_size: '10GB', price: 38.00, name: '10GB' },
+        { package_size: '20GB', price: 75.00, name: '20GB' },
       ],
       telecel: [
-        { package_size: '100MB', price: 2.80, name: 'Telecel 100MB' },
-        { package_size: '500MB', price: 9.00, name: 'Telecel 500MB' },
-        { package_size: '1GB', price: 13.00, name: 'Telecel 1GB' },
-        { package_size: '2GB', price: 22.00, name: 'Telecel 2GB' },
-        { package_size: '5GB', price: 48.00, name: 'Telecel 5GB' },
+        { package_size: '1GB', price: 4.00, name: '1GB' },
+        { package_size: '2GB', price: 8.00, name: '2GB' },
       ],
       airtel_tigo: [
-        { package_size: '100MB', price: 2.30, name: 'AirtelTigo 100MB' },
-        { package_size: '500MB', price: 7.50, name: 'AirtelTigo 500MB' },
-        { package_size: '1GB', price: 11.50, name: 'AirtelTigo 1GB' },
-        { package_size: '2GB', price: 19.00, name: 'AirtelTigo 2GB' },
-        { package_size: '5GB', price: 42.00, name: 'AirtelTigo 5GB' },
+        { package_size: '1GB', price: 3.50, name: '1GB' },
+        { package_size: '2GB', price: 7.00, name: '2GB' },
       ],
       bigtime: [
-        { package_size: '100MB', price: 2.00, name: 'Bigtime 100MB' },
-        { package_size: '500MB', price: 6.50, name: 'Bigtime 500MB' },
-        { package_size: '1GB', price: 10.00, name: 'Bigtime 1GB' },
-        { package_size: '2GB', price: 18.00, name: 'Bigtime 2GB' },
-        { package_size: '5GB', price: 40.00, name: 'Bigtime 5GB' },
+        { package_size: '1GB', price: 3.20, name: '1GB' },
+        { package_size: '2GB', price: 6.40, name: '2GB' },
       ],
     };
     return mockPlans[network] || mockPlans.mtn;
