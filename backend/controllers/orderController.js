@@ -56,15 +56,24 @@ exports.initiateOrder = async (req, res) => {
       });
     }
 
-    // Fetch plan details to get price
+    // ✅ Fetch plan details to get price
     const plans = await gigsgridService.getPlans(network);
+    console.log('🔍 Plans fetched:', plans.length);
+    
+    // Find the plan - match by package_size (e.g., "1GB")
     const plan = plans.find(p => p.package_size === package_size);
     if (!plan) {
+      console.error('❌ Plan not found for:', package_size, 'in', plans.map(p => p.package_size));
       return res.status(400).json({ error: 'Invalid package size for the selected network.' });
     }
 
+    console.log('✅ Found plan:', plan);
+
     const basePrice = plan.price;
+    // ✅ Apply markup to get selling price
     const sellingPrice = applyMarkup(basePrice);
+    
+    console.log('💰 Base price:', basePrice, '→ Selling price:', sellingPrice);
 
     // Create order record
     const order = new Order({
@@ -78,15 +87,16 @@ exports.initiateOrder = async (req, res) => {
     });
     await order.save();
 
-    // Initiate Paystack transaction
+    // ✅ Initiate Paystack transaction
     const transactionRef = uuidv4();
 
-    // ✅ FIX: Convert to pesewas (integer) – Paystack requires integer
-    const amountInPesewas = Math.round(sellingPrice * 100); // e.g., 4.60 * 100 = 460
+    // ✅ Convert to pesewas (integer) – Paystack requires integer
+    const amountInPesewas = Math.round(sellingPrice * 100);
+    console.log('💳 Amount to Paystack:', amountInPesewas, 'pesewas (', sellingPrice, 'GHS)');
 
     const paystackData = await paystackService.initializeTransaction({
       email: req.user?.email || 'customer@example.com',
-      amount: amountInPesewas, // Now an integer
+      amount: amountInPesewas, // ✅ Now an integer (e.g., 460)
       reference: transactionRef,
       callback_url: `${process.env.FRONTEND_URL}/payment-callback.html`,
       metadata: {
@@ -109,11 +119,11 @@ exports.initiateOrder = async (req, res) => {
     order.transactionRef = transactionRef;
     await order.save();
 
-    // Return data to frontend
+    // ✅ Return data to frontend (including selling price)
     res.status(201).json({
       orderId: order._id,
       transactionRef,
-      amount: sellingPrice,
+      amount: sellingPrice, // ✅ Send the markup price (e.g., 4.60)
       paystackKey: process.env.PAYSTACK_PUBLIC_KEY,
       accessCode: paystackData.access_code,
     });
