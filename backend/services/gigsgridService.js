@@ -2,7 +2,8 @@
  * gigsgridService.js
  * ------------------------------------------------
  * Service module that encapsulates all communication with the Gigsgrid API.
- * Implements caching (10 min) and falls back to legacy endpoints if needed.
+ * Implements caching (10 min) and falls back to mock data if all endpoints fail.
+ * The mock data reflects the actual MTN packages from your Gigsgrid dashboard.
  */
 
 const axios = require('axios');
@@ -20,6 +21,9 @@ class GigsgridService {
     }
   }
 
+  /**
+   * Private request method with authentication.
+   */
   async _request(endpoint, options = {}) {
     const url = endpoint.startsWith('http') ? endpoint : `${this.baseURL}${endpoint}`;
     const headers = {
@@ -51,6 +55,10 @@ class GigsgridService {
     }
   }
 
+  /**
+   * Fetch plans for a given network, trying multiple endpoints if needed.
+   * Falls back to mock data if all endpoints fail.
+   */
   async getPlans(network) {
     if (!this.apiKey) {
       console.warn('⚠️ GIGSGRID_API_KEY missing – using mock data.');
@@ -61,6 +69,7 @@ class GigsgridService {
     const cached = planCache.get(cacheKey);
     if (cached) return cached;
 
+    // Try endpoints in order
     const endpoints = [
       `/v1/plans/${network}`,
       `/list_plans/${network}`,
@@ -82,6 +91,7 @@ class GigsgridService {
       return plans;
     }
 
+    // All endpoints failed – use mock data
     console.warn(`⚠️ All endpoints failed for ${network} – returning mock data.`);
     return this.getMockPlans(network);
   }
@@ -94,6 +104,7 @@ class GigsgridService {
     try {
       const data = await this._request(endpoint, { method: 'GET' });
 
+      // Check if the response indicates an error
       if (data.status === 'error' || data.success === false) {
         console.warn(`⚠️ Endpoint ${endpoint} returned error:`, data.message);
         return null;
@@ -137,35 +148,55 @@ class GigsgridService {
   }
 
   /**
-   * Mock plans for testing (only used if all endpoints fail).
+   * Mock plans – exactly matches the MTN packages from your screenshot.
+   * Used when the Gigsgrid API is unavailable or returns an error.
    */
   getMockPlans(network) {
     const mockPlans = {
       mtn: [
         { package_size: '1GB', price: 3.80, name: '1GB' },
         { package_size: '2GB', price: 7.60, name: '2GB' },
+        { package_size: '3GB', price: 11.40, name: '3GB' },
+        { package_size: '4GB', price: 15.20, name: '4GB' },
         { package_size: '5GB', price: 19.00, name: '5GB' },
+        { package_size: '6GB', price: 22.80, name: '6GB' },
+        { package_size: '7GB', price: 26.60, name: '7GB' },
+        { package_size: '8GB', price: 30.40, name: '8GB' },
+        { package_size: '9GB', price: 34.20, name: '9GB' },
         { package_size: '10GB', price: 38.00, name: '10GB' },
+        { package_size: '11GB', price: 41.80, name: '11GB' },
+        { package_size: '12GB', price: 45.60, name: '12GB' },
+        { package_size: '14GB', price: 53.20, name: '14GB' },
+        { package_size: '15GB', price: 57.00, name: '15GB' },
+        { package_size: '18GB', price: 68.40, name: '18GB' },
         { package_size: '20GB', price: 75.00, name: '20GB' },
+        { package_size: '25GB', price: 94.00, name: '25GB' },
+        { package_size: '30GB', price: 113.00, name: '30GB' },
+        { package_size: '40GB', price: 145.00, name: '40GB' },
+        { package_size: '50GB', price: 180.00, name: '50GB' },
       ],
       telecel: [
         { package_size: '1GB', price: 4.00, name: '1GB' },
         { package_size: '2GB', price: 8.00, name: '2GB' },
+        { package_size: '5GB', price: 18.00, name: '5GB' },
       ],
       airtel_tigo: [
         { package_size: '1GB', price: 3.50, name: '1GB' },
         { package_size: '2GB', price: 7.00, name: '2GB' },
+        { package_size: '5GB', price: 16.00, name: '5GB' },
       ],
       bigtime: [
         { package_size: '1GB', price: 3.20, name: '1GB' },
         { package_size: '2GB', price: 6.40, name: '2GB' },
+        { package_size: '5GB', price: 15.00, name: '5GB' },
       ],
     };
     return mockPlans[network] || mockPlans.mtn;
   }
 
-  // --- Other methods (unchanged) ---
-
+  /**
+   * Create a new data bundle order on Gigsgrid.
+   */
   async createOrder(orderData) {
     const payload = {
       beneficiary: orderData.beneficiary,
@@ -180,14 +211,23 @@ class GigsgridService {
     return data;
   }
 
+  /**
+   * Check the status of an order on Gigsgrid.
+   */
   async checkOrderStatus(orderId) {
     return this._request(`/check_order_status?order_id=${orderId}`, { method: 'GET' });
   }
 
+  /**
+   * Retrieve all pending top‑up verifications from Gigsgrid.
+   */
   async getPendingVerifications() {
     return this._request('/get_pending_verifications', { method: 'GET' });
   }
 
+  /**
+   * Verify a top‑up (mark as completed) on Gigsgrid.
+   */
   async verifyTopup(verificationData) {
     return this._request('/verify_topup', {
       method: 'POST',
