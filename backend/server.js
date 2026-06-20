@@ -22,17 +22,18 @@ const webhookRoutes = require('./routes/webhook');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// ✅ Enable trust proxy – required for rate limiter behind Render's proxy
+app.set('trust proxy', 1); // trust first proxy (Render)
+
 // ---------- CORS Configuration ----------
-// Allow your Vercel frontend only
 const allowedOrigins = [
   'https://pascallinks.vercel.app',
-  'http://localhost:3000', // for local development if needed
+  'http://localhost:3000',
 ];
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or curl)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
@@ -40,7 +41,7 @@ app.use(
         callback(new Error('Not allowed by CORS'));
       }
     },
-    credentials: false, // we use JWT in headers, not cookies
+    credentials: false,
   })
 );
 // -----------------------------------------
@@ -48,7 +49,7 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Global rate limiting (optional)
+// Global rate limiting (after trust proxy is set)
 app.use(generalLimiter);
 
 // Health check
