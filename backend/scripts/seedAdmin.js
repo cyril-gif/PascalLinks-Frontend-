@@ -15,7 +15,7 @@ const createAdmin = async () => {
     console.log('Connected to MongoDB');
 
     const adminEmail = 'cyrillantam@gmail.com';
-    const adminPassword = '198Pascal_.?'; // change this
+    const adminPassword = '1122pascal'; // change this
     const existing = await User.findOne({ email: adminEmail });
     if (existing) {
       console.log('Admin already exists:', adminEmail);
