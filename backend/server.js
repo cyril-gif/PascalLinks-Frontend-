@@ -16,6 +16,11 @@ const { generalLimiter } = require('./middleware/rateLimiter');
 const authRoutes = require('./routes/auth');
 const orderRoutes = require('./routes/orders');
 const planRoutes = require('./routes/plans');
+// ... after other imports
+const adminRoutes = require('./routes/admin');
+const webhookRoutes = require('./routes/webhook');
+
+
 // TODO: adminRoutes, webhookRoutes will be added later
 
 const app = express();
@@ -41,8 +46,8 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/plans', planRoutes);
-// app.use('/api/admin', adminRoutes);      // to be added
-// app.use('/api/webhook', webhookRoutes);  // to be added
+app.use('/api/admin', adminRoutes);      // to be added
+app.use('/api/webhook', webhookRoutes);  // to be added
 
 // 404 handler
 app.use((req, res) => {
