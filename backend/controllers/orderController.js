@@ -9,7 +9,6 @@
 const Order = require('../models/Order');
 const Transaction = require('../models/Transaction');
 const gigsgridService = require('../services/gigsgridService');
-const Transaction = require('../models/Transaction');
 const paystackService = require('../services/paystackService'); // we'll create this next
 const { v4: uuidv4 } = require('uuid');
 
