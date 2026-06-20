@@ -9,11 +9,11 @@
 const Order = require('../models/Order');
 const Transaction = require('../models/Transaction');
 const gigsgridService = require('../services/gigsgridService');
-const paystackService = require('../services/paystackService'); // we'll create this next
+const paystackService = require('../services/paystackService');
 const { v4: uuidv4 } = require('uuid');
 
-// Helper to calculate markup (e.g., 10% or fixed amount)
-const MARKUP_PERCENTAGE = 21.05; // can be stored in DB or env
+// Markup to sell 1GB for 4.60 when base is 3.80
+const MARKUP_PERCENTAGE = 21.05; // 21.05% markup
 
 /**
  * Calculate final selling price including markup.
@@ -27,13 +27,6 @@ const applyMarkup = (basePrice) => {
 /**
  * POST /api/orders/initiate
  * Body: { network, package_size, beneficiary (phone) }
- * 1. Validate input
- * 2. Check for duplicate order within 2 minutes
- * 3. Fetch plan details (from cache or API) to get base price
- * 4. Apply markup
- * 5. Create Order document with status 'pending_payment'
- * 6. Initiate Paystack transaction
- * 7. Return transaction reference and order ID to frontend
  */
 exports.initiateOrder = async (req, res) => {
   try {
@@ -44,8 +37,8 @@ exports.initiateOrder = async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: network, package_size, beneficiary' });
     }
 
-    // Validate phone number (simple Ghana format)
-    const phoneRegex = /^0[2357]\d{8}$/; // starts with 0, then 2,3,5,7, then 8 digits
+    // Validate phone number (Ghana format)
+    const phoneRegex = /^0[2357]\d{8}$/;
     if (!phoneRegex.test(beneficiary)) {
       return res.status(400).json({ error: 'Invalid phone number. Use Ghana format (e.g., 024XXXXXXX)' });
     }
@@ -64,35 +57,38 @@ exports.initiateOrder = async (req, res) => {
     }
 
     // Fetch plan details to get price
-    // We assume the plan object contains a 'price' field in GHS.
     const plans = await gigsgridService.getPlans(network);
     const plan = plans.find(p => p.package_size === package_size);
     if (!plan) {
       return res.status(400).json({ error: 'Invalid package size for the selected network.' });
     }
-    const basePrice = plan.price; // in GHS
+
+    const basePrice = plan.price;
     const sellingPrice = applyMarkup(basePrice);
 
     // Create order record
     const order = new Order({
-      userId: req.user?._id || null, // if user is logged in
+      userId: req.user?._id || null,
       network,
       package_size,
       beneficiary,
       basePrice,
       sellingPrice,
       status: 'pending_payment',
-      // Gigsgrid order id will be filled after payment
     });
     await order.save();
 
     // Initiate Paystack transaction
-    const transactionRef = uuidv4(); // unique reference
+    const transactionRef = uuidv4();
+
+    // ✅ FIX: Convert to pesewas (integer) – Paystack requires integer
+    const amountInPesewas = Math.round(sellingPrice * 100); // e.g., 4.60 * 100 = 460
+
     const paystackData = await paystackService.initializeTransaction({
-      email: req.user?.email || 'guest@example.com', // fallback
-      amount: sellingPrice * 100, // Paystack uses pesewas (GHS * 100)
+      email: req.user?.email || 'customer@example.com',
+      amount: amountInPesewas, // Now an integer
       reference: transactionRef,
-      callback_url: `${process.env.FRONTEND_URL}/payment-callback`,
+      callback_url: `${process.env.FRONTEND_URL}/payment-callback.html`,
       metadata: {
         orderId: order._id.toString(),
       },
@@ -113,25 +109,27 @@ exports.initiateOrder = async (req, res) => {
     order.transactionRef = transactionRef;
     await order.save();
 
-    // Return data to frontend for Paystack popup
+    // Return data to frontend
     res.status(201).json({
       orderId: order._id,
       transactionRef,
       amount: sellingPrice,
       paystackKey: process.env.PAYSTACK_PUBLIC_KEY,
-      accessCode: paystackData.access_code, // optional, for popup
+      accessCode: paystackData.access_code,
     });
   } catch (error) {
-    console.error('Error initiating order:', error);
-    res.status(500).json({ error: 'Failed to initiate order. Please try again.' });
+    console.error('❌ Initiate order error:', error.message);
+    console.error('Stack:', error.stack);
+    res.status(500).json({
+      error: 'Failed to initiate order. Please try again.',
+      details: error.message,
+    });
   }
 };
 
 /**
  * POST /api/orders/confirm
- * This endpoint is called by Paystack webhook or redirect.
- * Body: { reference, status } – we'll verify with Paystack.
- * On success: call Gigsgrid API to place the order.
+ * Called by Paystack webhook or redirect.
  */
 exports.confirmPayment = async (req, res) => {
   try {
@@ -140,7 +138,6 @@ exports.confirmPayment = async (req, res) => {
     // Verify transaction with Paystack
     const verification = await paystackService.verifyTransaction(reference);
     if (!verification.status || verification.data.status !== 'success') {
-      // Update transaction and order as failed
       await Transaction.findOneAndUpdate({ reference }, { status: 'failed' });
       await Order.findOneAndUpdate({ transactionRef: reference }, { status: 'payment_failed' });
       return res.status(400).json({ error: 'Payment not successful.' });
@@ -165,14 +162,13 @@ exports.confirmPayment = async (req, res) => {
 
     // Update order with Gigsgrid details
     order.gigsgridOrderId = gigsgridOrder.order_id;
-    order.status = 'processing'; // or 'completed' if instant
+    order.status = 'processing';
     order.gigsgridResponse = gigsgridOrder;
     await order.save();
 
-    // Return success (webhook expects 200 OK)
     res.status(200).json({ success: true, orderId: order._id, gigsgridOrderId: gigsgridOrder.order_id });
   } catch (error) {
-    console.error('Error confirming payment:', error);
+    console.error('❌ Confirm payment error:', error.message);
     res.status(500).json({ error: 'Payment confirmation failed.' });
   }
 };
@@ -202,9 +198,11 @@ exports.getOrderById = async (req, res) => {
     if (!order) {
       return res.status(404).json({ error: 'Order not found.' });
     }
-    // Check ownership: if user is not admin, ensure order belongs to them
-    if (req.user.role !== 'admin' && order.userId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Unauthorized access to this order.' });
+    // If user is logged in, ensure they own it or are admin
+    if (req.user) {
+      if (req.user.role !== 'admin' && order.userId && order.userId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ error: 'Unauthorized access to this order.' });
+      }
     }
     res.json(order);
   } catch (error) {
