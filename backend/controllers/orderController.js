@@ -13,7 +13,7 @@ const paystackService = require('../services/paystackService'); // we'll create 
 const { v4: uuidv4 } = require('uuid');
 
 // Helper to calculate markup (e.g., 10% or fixed amount)
-const MARKUP_PERCENTAGE = 10; // can be stored in DB or env
+const MARKUP_PERCENTAGE = 21.05; // can be stored in DB or env
 
 /**
  * Calculate final selling price including markup.
