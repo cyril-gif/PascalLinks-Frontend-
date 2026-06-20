@@ -5,8 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
-    "seed": "node scripts/seedAdmin.js"   // optional – you can create a seed script later
+    "dev": "nodemon server.js"
   },
   "keywords": [
     "data bundles",
