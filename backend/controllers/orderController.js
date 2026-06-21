@@ -3,7 +3,7 @@
  * ------------------------------------------------
  * Handles order creation, confirmation, retrieval,
  * and tracking with live status sync from DataMart.
- * Uses provider‑specific markup.
+ * Uses provider‑specific markup and stores customer name.
  */
 
 const Order = require('../models/Order');
@@ -17,7 +17,7 @@ const jwt = require('jsonwebtoken');
 
 // Provider‑specific markups
 const MARKUP_DATAMART = 22.5;
-const MARKUP_GIGSGRID = 23.6842;
+const MARKUP_GIGSGRID = 23.6842; // 3.80 → 4.70
 
 const applyMarkup = (basePrice, provider) => {
   const percentage = provider === 'datamart' ? MARKUP_DATAMART : MARKUP_GIGSGRID;
@@ -40,10 +40,10 @@ function mapDataMartStatus(dmStatus) {
 // ----- POST /api/orders/initiate -----
 exports.initiateOrder = async (req, res) => {
   try {
-    const { network, package_size, beneficiary, provider } = req.body;
+    const { network, package_size, beneficiary, customerName, provider } = req.body;
 
-    if (!network || !package_size || !beneficiary) {
-      return res.status(400).json({ error: 'Missing required fields.' });
+    if (!network || !package_size || !beneficiary || !customerName) {
+      return res.status(400).json({ error: 'Missing required fields: network, package_size, beneficiary, customerName' });
     }
 
     const phoneRegex = /^0\d{9}$/;
@@ -95,7 +95,6 @@ exports.initiateOrder = async (req, res) => {
     }
 
     const basePrice = plan.price;
-    // Apply markup based on the provider being used
     const sellingPrice = applyMarkup(basePrice, usedProvider);
 
     // Optional user association
@@ -110,11 +109,13 @@ exports.initiateOrder = async (req, res) => {
       }
     } catch (_) { /* guest */ }
 
+    // Create order with customerName
     const order = new Order({
       userId,
       network,
       package_size,
       beneficiary,
+      customerName,
       basePrice,
       sellingPrice,
       provider: usedProvider,
