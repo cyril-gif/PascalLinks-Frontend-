@@ -2,8 +2,7 @@
  * controllers/orderController.js
  * ------------------------------------------------
  * Handles order creation, payment confirmation, retrieval,
- * and tracking by phone / reference.
- * Integrates with DataMart (primary) and Gigsgrid (fallback).
+ * and tracking with live status sync from DataMart.
  */
 
 const Order = require('../models/Order');
@@ -228,6 +227,22 @@ exports.getOrderById = async (req, res) => {
         return res.status(403).json({ error: 'Unauthorized access to this order.' });
       }
     }
+    // Optionally sync live status if DataMart
+    if (order.provider === 'datamart' && order.providerOrderId && order.status !== 'completed' && order.status !== 'failed') {
+      try {
+        const dmStatus = await datamartService.checkOrderStatus(order.providerOrderId);
+        if (dmStatus && dmStatus.status) {
+          // Map DataMart status to our internal statuses
+          const newStatus = mapDataMartStatus(dmStatus.status);
+          if (newStatus && newStatus !== order.status) {
+            order.status = newStatus;
+            await order.save();
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Could not sync DataMart status:', error.message);
+      }
+    }
     res.json(order);
   } catch (error) {
     console.error('Error fetching order:', error);
@@ -249,12 +264,39 @@ exports.getOrdersByPhone = async (req, res) => {
       return res.status(400).json({ error: 'Invalid phone number format' });
     }
 
-    const orders = await Order.find({ beneficiary: phone })
+    let orders = await Order.find({ beneficiary: phone })
       .sort({ createdAt: -1 })
       .limit(20);
 
     if (orders.length === 0) {
       return res.status(404).json({ error: 'No orders found for this phone number' });
+    }
+
+    // Sync live status for DataMart orders that are not final
+    let updated = false;
+    for (let order of orders) {
+      if (order.provider === 'datamart' && order.providerOrderId && order.status !== 'completed' && order.status !== 'failed') {
+        try {
+          const dmStatus = await datamartService.checkOrderStatus(order.providerOrderId);
+          if (dmStatus && dmStatus.status) {
+            const newStatus = mapDataMartStatus(dmStatus.status);
+            if (newStatus && newStatus !== order.status) {
+              order.status = newStatus;
+              await order.save();
+              updated = true;
+            }
+          }
+        } catch (error) {
+          console.warn(`⚠️ Could not sync DataMart status for order ${order._id}:`, error.message);
+        }
+      }
+    }
+
+    // If any order was updated, re-fetch to send fresh data
+    if (updated) {
+      orders = await Order.find({ beneficiary: phone })
+        .sort({ createdAt: -1 })
+        .limit(20);
     }
 
     res.json(orders);
@@ -279,9 +321,40 @@ exports.getOrdersByReference = async (req, res) => {
       return res.status(404).json({ error: 'Order not found with this reference' });
     }
 
+    // Sync live status if DataMart
+    if (order.provider === 'datamart' && order.providerOrderId && order.status !== 'completed' && order.status !== 'failed') {
+      try {
+        const dmStatus = await datamartService.checkOrderStatus(order.providerOrderId);
+        if (dmStatus && dmStatus.status) {
+          const newStatus = mapDataMartStatus(dmStatus.status);
+          if (newStatus && newStatus !== order.status) {
+            order.status = newStatus;
+            await order.save();
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Could not sync DataMart status:', error.message);
+      }
+    }
+
     res.json(order);
   } catch (error) {
     console.error('Error fetching order by reference:', error);
     res.status(500).json({ error: 'Failed to fetch order' });
   }
 };
+
+/**
+ * Helper to map DataMart status to our internal statuses.
+ */
+function mapDataMartStatus(dmStatus) {
+  const statusMap = {
+    'pending': 'pending_payment',
+    'processing': 'processing',
+    'delivered': 'completed',
+    'completed': 'completed',
+    'failed': 'failed',
+    'cancelled': 'failed',
+  };
+  return statusMap[dmStatus.toLowerCase()] || null;
+}
