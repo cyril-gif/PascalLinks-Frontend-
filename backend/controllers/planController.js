@@ -3,6 +3,7 @@
  * ------------------------------------------------
  * Fetches plans for a given network + provider.
  * Applies provider‑specific markup to base prices.
+ * Restricts Gigsgrid to MTN only.
  */
 
 const datamartService = require('../services/datamartService');
@@ -10,7 +11,7 @@ const gigsgridService = require('../services/gigsgridService');
 
 // Different markups per provider
 const MARKUP_DATAMART = 22.5;   // 22.5% → 1GB = 4.90
-const MARKUP_GIGSGRID = 23.6842;   // 20%   → 1GB = 4.56 (from 3.80)
+const MARKUP_GIGSGRID = 23.6842; // 3.80 → 4.70
 
 /**
  * Apply markup based on provider.
@@ -28,6 +29,11 @@ exports.getPlans = async (req, res) => {
     const { network } = req.params;
     const { provider } = req.query;
 
+    // Restrict Gigsgrid to MTN only
+    if (provider === 'gigsgrid' && network !== 'mtn') {
+      return res.status(400).json({ error: 'Gigsgrid only supports MTN network.' });
+    }
+
     const validNetworks = ['mtn', 'telecel', 'airtel_tigo', 'bigtime'];
     if (!validNetworks.includes(network)) {
       return res.status(400).json({ error: 'Invalid network.' });
@@ -41,7 +47,7 @@ exports.getPlans = async (req, res) => {
     } else if (usedProvider === 'gigsgrid') {
       plans = await gigsgridService.getPlans(network);
     } else {
-      return res.status(400).json({ error: 'Invalid provider.' });
+      return res.status(400).json({ error: 'Invalid provider. Use datamart or gigsgrid.' });
     }
 
     // Fallback if no plans from chosen provider
