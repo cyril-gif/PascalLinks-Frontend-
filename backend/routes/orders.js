@@ -8,7 +8,7 @@
 const express = require('express');
 const router = express.Router();
 const orderController = require('../controllers/orderController');
-const { protect } = require('../middleware/authMiddleware');   // ✅ import protect
+const { protect } = require('../middleware/authMiddleware');
 
 // Public: initiate an order (creates Paystack transaction)
 router.post('/initiate', orderController.initiateOrder);
