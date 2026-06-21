@@ -31,7 +31,7 @@ exports.initiateOrder = async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields.' });
     }
 
-    const phoneRegex = /^0[2357]\d{8}$/;
+    const phoneRegex = /^0\d{9}$/;
     if (!phoneRegex.test(beneficiary)) {
       return res.status(400).json({ error: 'Invalid phone number.' });
     }
@@ -172,6 +172,7 @@ exports.confirmPayment = async (req, res) => {
         });
       }
 
+      // Store the DataMart reference (e.g., "MN-...")
       order.providerOrderId = providerResult.order_id || providerResult.reference || 'N/A';
       order.status = 'processing';
       order.providerResponse = providerResult;
@@ -232,7 +233,6 @@ exports.getOrderById = async (req, res) => {
       try {
         const dmStatus = await datamartService.checkOrderStatus(order.providerOrderId);
         if (dmStatus && dmStatus.status) {
-          // Map DataMart status to our internal statuses
           const newStatus = mapDataMartStatus(dmStatus.status);
           if (newStatus && newStatus !== order.status) {
             order.status = newStatus;
@@ -259,7 +259,7 @@ exports.getOrdersByPhone = async (req, res) => {
     if (!phone) {
       return res.status(400).json({ error: 'Phone number is required' });
     }
-    const phoneRegex = /^0[2357]\d{8}$/;
+    const phoneRegex = /^0\d{9}$/;
     if (!phoneRegex.test(phone)) {
       return res.status(400).json({ error: 'Invalid phone number format' });
     }
@@ -292,7 +292,6 @@ exports.getOrdersByPhone = async (req, res) => {
       }
     }
 
-    // If any order was updated, re-fetch to send fresh data
     if (updated) {
       orders = await Order.find({ beneficiary: phone })
         .sort({ createdAt: -1 })
