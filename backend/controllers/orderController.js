@@ -1,8 +1,8 @@
 /**
  * controllers/orderController.js
  * ------------------------------------------------
- * Complete version with order creation, confirmation,
- * user orders, tracking by phone / reference, and live DataMart sync.
+ * Handles order creation, confirmation, retrieval,
+ * and tracking with live status sync from DataMart.
  */
 
 const Order = require('../models/Order');
@@ -15,7 +15,6 @@ const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 
 const MARKUP_PERCENTAGE = 21.05;
-
 const applyMarkup = (basePrice) => basePrice * (1 + MARKUP_PERCENTAGE / 100);
 
 // ----- Helper to map DataMart status -----
@@ -34,7 +33,7 @@ function mapDataMartStatus(dmStatus) {
 // ----- POST /api/orders/initiate -----
 exports.initiateOrder = async (req, res) => {
   try {
-    const { network, package_size, beneficiary } = req.body;
+    const { network, package_size, beneficiary, provider } = req.body;
 
     if (!network || !package_size || !beneficiary) {
       return res.status(400).json({ error: 'Missing required fields.' });
@@ -56,16 +55,31 @@ exports.initiateOrder = async (req, res) => {
       return res.status(409).json({ error: 'Duplicate order. Please wait 2 minutes.' });
     }
 
-    // Get plans (DataMart first, fallback Gigsgrid)
+    // Get plans from the chosen provider
     let plans = [];
-    let provider = 'datamart';
-    try {
+    let usedProvider = provider || 'datamart';
+
+    if (usedProvider === 'datamart') {
       plans = await datamartService.getPlans(network);
-      if (!plans || plans.length === 0) throw new Error('No plans from DataMart');
-    } catch (error) {
-      console.warn('⚠️ DataMart plans failed, falling back to Gigsgrid:', error.message);
-      provider = 'gigsgrid';
+    } else if (usedProvider === 'gigsgrid') {
       plans = await gigsgridService.getPlans(network);
+    } else {
+      return res.status(400).json({ error: 'Invalid provider.' });
+    }
+
+    if (!plans || plans.length === 0) {
+      // fallback to the other provider
+      if (usedProvider === 'datamart') {
+        plans = await gigsgridService.getPlans(network);
+        usedProvider = 'gigsgrid';
+      } else {
+        plans = await datamartService.getPlans(network);
+        usedProvider = 'datamart';
+      }
+    }
+
+    if (!plans || plans.length === 0) {
+      return res.status(500).json({ error: 'No plans available from any provider.' });
     }
 
     const plan = plans.find(p => p.package_size === package_size);
@@ -96,7 +110,7 @@ exports.initiateOrder = async (req, res) => {
       beneficiary,
       basePrice,
       sellingPrice,
-      provider,
+      provider: usedProvider,
       status: 'pending_payment',
     });
     await order.save();
@@ -217,7 +231,6 @@ exports.getOrderById = async (req, res) => {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found.' });
 
-    // Optional DataMart sync
     if (order.provider === 'datamart' && order.providerOrderId && !['completed','failed'].includes(order.status)) {
       try {
         const dmStatus = await datamartService.checkOrderStatus(order.providerOrderId);
@@ -244,7 +257,7 @@ exports.getOrdersByPhone = async (req, res) => {
     if (!phone) return res.status(400).json({ error: 'Phone number is required' });
     const cleaned = phone.trim().replace(/\s/g, '');
     if (!/^0\d{9}$/.test(cleaned)) {
-      return res.status(400).json({ error: 'Invalid phone format. Use 10-digit Ghana number.' });
+      return res.status(400).json({ error: 'Invalid phone format.' });
     }
 
     let orders = await Order.find({ beneficiary: cleaned }).sort({ createdAt: -1 }).limit(20);
@@ -266,7 +279,6 @@ exports.getOrdersByPhone = async (req, res) => {
       }
     }
 
-    // Re‑fetch to reflect updates
     orders = await Order.find({ beneficiary: cleaned }).sort({ createdAt: -1 }).limit(20);
     res.json(orders);
   } catch (error) {
