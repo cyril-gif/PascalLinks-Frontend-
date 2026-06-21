@@ -10,7 +10,7 @@ const gigsgridService = require('../services/gigsgridService');
 
 // Different markups per provider
 const MARKUP_DATAMART = 22.5;   // 22.5% → 1GB = 4.90
-const MARKUP_GIGSGRID = 20.0;   // 20%   → 1GB = 4.56 (from 3.80)
+const MARKUP_GIGSGRID = 23.6842;   // 20%   → 1GB = 4.56 (from 3.80)
 
 /**
  * Apply markup based on provider.
