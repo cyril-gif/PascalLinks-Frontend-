@@ -1,8 +1,8 @@
 /**
  * models/Order.js
  * ------------------------------------------------
- * Stores all data bundle orders. Tracks the entire lifecycle
- * from initiation to delivery (or failure).
+ * Defines the Order schema with customer name,
+ * provider details, pricing, and status.
  */
 
 const mongoose = require('mongoose');
@@ -12,84 +12,69 @@ const OrderSchema = new mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      default: null, // null for guest checkout
+      default: null,
     },
-    // Order details
+    customerName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     network: {
       type: String,
       enum: ['mtn', 'telecel', 'airtel_tigo', 'bigtime'],
       required: true,
     },
     package_size: {
-      type: String, // e.g., "1GB", "500MB"
+      type: String,
       required: true,
     },
     beneficiary: {
       type: String,
       required: true,
-      match: [/^0[2357]\d{8}$/, 'Invalid Ghana phone number'],
+      match: [/^0\d{9}$/, 'Invalid Ghana phone number'],
     },
-    // Pricing
     basePrice: {
-      type: Number, // price from Gigsgrid (GHS)
+      type: Number,
       required: true,
     },
     sellingPrice: {
-      type: Number, // price after markup (GHS)
+      type: Number,
       required: true,
     },
-    // Payment & Gigsgrid references
     transactionRef: {
-      type: String, // Paystack reference
+      type: String,
       unique: true,
       sparse: true,
     },
-    gigsgridOrderId: {
-      type: String, // returned by Gigsgrid
+    provider: {
+      type: String,
+      enum: ['datamart', 'gigsgrid'],
+      default: 'datamart',
+    },
+    providerOrderId: {
+      type: String,
       sparse: true,
     },
-    // Status tracking
+    providerResponse: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
     status: {
       type: String,
       enum: [
-        'pending_payment', // awaiting Paystack
-        'payment_failed',  // Paystack declined
-        'processing',      // payment ok, order sent to Gigsgrid
-        'completed',       // delivered
-        'failed',          // Gigsgrid returned an error
-        'retrying',        // admin manually retrying
+        'pending_payment',
+        'payment_failed',
+        'processing',
+        'completed',
+        'failed',
+        'retrying',
       ],
       default: 'pending_payment',
     },
-    // Raw responses for debugging
-    gigsgridResponse: {
-      type: mongoose.Schema.Types.Mixed,
-      default: null,
-    },
-    paystackResponse: {
-      type: mongoose.Schema.Types.Mixed,
-      default: null,
-    },
-    // Add to Order schema
-provider: {
-  type: String,
-  enum: ['datamart', 'gigsgrid'],
-  default: 'datamart',
-},
-providerOrderId: {
-  type: String,
-  sparse: true,
-},
-providerResponse: {
-  type: mongoose.Schema.Types.Mixed,
-  default: null,
-},
-    // Error messages if any
     errorMessage: {
       type: String,
       default: null,
     },
-    // Webhook received flag
     webhookProcessed: {
       type: Boolean,
       default: false,
@@ -100,7 +85,7 @@ providerResponse: {
   }
 );
 
-// Index for duplicate detection (beneficiary + createdAt)
+// Index for duplicate detection
 OrderSchema.index({ beneficiary: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Order', OrderSchema);
