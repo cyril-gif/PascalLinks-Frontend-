@@ -1,8 +1,9 @@
 /**
  * controllers/orderController.js
  * ------------------------------------------------
- * Updated to support DataMartGH as the primary provider,
- * with Gigsgrid as fallback.
+ * Handles order creation, payment confirmation, and retrieval.
+ * Integrates with DataMart (primary) and Gigsgrid (fallback).
+ * Performs duplicate check (same beneficiary within 2 minutes).
  */
 
 const Order = require('../models/Order');
@@ -14,9 +15,14 @@ const paystackService = require('../services/paystackService');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 
-// Markup percentage (adjust as needed)
-const MARKUP_PERCENTAGE = 21.05; // 21.05% markup
+// Markup percentage – adjust as needed (21.05% gives 1GB = 4.60 when base is 3.80)
+const MARKUP_PERCENTAGE = 21.05;
 
+/**
+ * Apply markup to base price.
+ * @param {number} basePrice - Price from provider (GHS)
+ * @returns {number} - Selling price (GHS)
+ */
 const applyMarkup = (basePrice) => {
   return basePrice * (1 + MARKUP_PERCENTAGE / 100);
 };
@@ -31,15 +37,15 @@ exports.initiateOrder = async (req, res) => {
 
     // --- Validation ---
     if (!network || !package_size || !beneficiary) {
-      return res.status(400).json({ error: 'Missing required fields.' });
+      return res.status(400).json({ error: 'Missing required fields: network, package_size, beneficiary' });
     }
 
     const phoneRegex = /^0[2357]\d{8}$/;
     if (!phoneRegex.test(beneficiary)) {
-      return res.status(400).json({ error: 'Invalid phone number.' });
+      return res.status(400).json({ error: 'Invalid phone number. Use Ghana format (e.g., 024XXXXXXX)' });
     }
 
-    // Duplicate check
+    // --- Duplicate check (2 minutes) ---
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const recentOrder = await Order.findOne({
       beneficiary,
@@ -48,7 +54,7 @@ exports.initiateOrder = async (req, res) => {
     });
     if (recentOrder) {
       return res.status(409).json({
-        error: 'Duplicate order detected. Please wait 2 minutes.',
+        error: 'Duplicate order detected. Please wait 2 minutes before trying again.',
       });
     }
 
@@ -60,7 +66,7 @@ exports.initiateOrder = async (req, res) => {
       if (!plans || plans.length === 0) {
         throw new Error('No plans from DataMart');
       }
-      console.log('📦 Using DataMart plans');
+      console.log('📦 Using DataMart plans for', network);
     } catch (error) {
       console.warn('⚠️ DataMart plans failed, falling back to Gigsgrid:', error.message);
       provider = 'gigsgrid';
@@ -69,13 +75,13 @@ exports.initiateOrder = async (req, res) => {
 
     const plan = plans.find(p => p.package_size === package_size);
     if (!plan) {
-      return res.status(400).json({ error: 'Invalid package size.' });
+      return res.status(400).json({ error: 'Invalid package size for the selected network.' });
     }
 
     const basePrice = plan.price;
     const sellingPrice = applyMarkup(basePrice);
 
-    // --- Get user from token ---
+    // --- Try to associate with logged-in user (optional) ---
     let userId = null;
     try {
       const authHeader = req.headers.authorization;
@@ -86,7 +92,7 @@ exports.initiateOrder = async (req, res) => {
         if (user) userId = user._id;
       }
     } catch (error) {
-      console.warn('Guest checkout (no valid token)');
+      // Silent – allow guest checkout
     }
 
     // --- Create order ---
@@ -97,7 +103,7 @@ exports.initiateOrder = async (req, res) => {
       beneficiary,
       basePrice,
       sellingPrice,
-      provider, // track which provider was used
+      provider,          // 'datamart' or 'gigsgrid'
       status: 'pending_payment',
     });
     await order.save();
@@ -111,9 +117,12 @@ exports.initiateOrder = async (req, res) => {
       amount: amountInPesewas,
       reference: transactionRef,
       callback_url: `${process.env.FRONTEND_URL}/payment-callback.html`,
-      metadata: { orderId: order._id.toString() },
+      metadata: {
+        orderId: order._id.toString(),
+      },
     });
 
+    // Save transaction
     const transaction = new Transaction({
       orderId: order._id,
       reference: transactionRef,
@@ -127,6 +136,7 @@ exports.initiateOrder = async (req, res) => {
     order.transactionRef = transactionRef;
     await order.save();
 
+    // --- Return to frontend ---
     res.status(201).json({
       orderId: order._id,
       transactionRef,
@@ -136,6 +146,7 @@ exports.initiateOrder = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Initiate order error:', error.message);
+    console.error('Stack:', error.stack);
     res.status(500).json({
       error: 'Failed to initiate order. Please try again.',
       details: error.message,
@@ -146,11 +157,13 @@ exports.initiateOrder = async (req, res) => {
 /**
  * POST /api/orders/confirm
  * Called by Paystack webhook or redirect.
+ * Body: { reference }
  */
 exports.confirmPayment = async (req, res) => {
   try {
     const { reference } = req.body;
 
+    // --- Verify with Paystack ---
     const verification = await paystackService.verifyTransaction(reference);
     if (!verification.status || verification.data.status !== 'success') {
       await Transaction.findOneAndUpdate({ reference }, { status: 'failed' });
@@ -160,14 +173,15 @@ exports.confirmPayment = async (req, res) => {
 
     await Transaction.findOneAndUpdate({ reference }, { status: 'success' });
 
+    // --- Find the order ---
     const order = await Order.findOne({ transactionRef: reference });
     if (!order) {
       return res.status(404).json({ error: 'Order not found.' });
     }
 
     // --- Place order with the selected provider ---
-    let providerResult;
     const provider = order.provider || 'datamart';
+    let providerResult;
 
     try {
       if (provider === 'datamart') {
@@ -176,13 +190,16 @@ exports.confirmPayment = async (req, res) => {
           package_size: order.package_size,
           network_type: order.network,
         });
+        console.log('✅ DataMart order placed:', providerResult);
       } else {
+        // Fallback to Gigsgrid
         providerResult = await gigsgridService.createOrder({
           beneficiary: order.beneficiary,
           package_size: order.package_size,
           network_type: order.network,
           webhook_url: `${process.env.BACKEND_URL}/api/webhook/gigsgrid`,
         });
+        console.log('✅ Gigsgrid order placed:', providerResult);
       }
 
       // Update order with provider response
@@ -203,7 +220,7 @@ exports.confirmPayment = async (req, res) => {
       order.errorMessage = error.message;
       await order.save();
       res.status(500).json({
-        error: `Order placement failed with ${provider}. Please contact support.`,
+        error: `Order placement failed. Please contact support.`,
         details: error.message,
       });
     }
@@ -213,4 +230,40 @@ exports.confirmPayment = async (req, res) => {
   }
 };
 
-// ... (getUserOrders and getOrderById remain unchanged)
+/**
+ * GET /api/orders
+ * Get all orders for the authenticated user.
+ */
+exports.getUserOrders = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const orders = await Order.find({ userId }).sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching user orders:', error);
+    res.status(500).json({ error: 'Failed to fetch orders.' });
+  }
+};
+
+/**
+ * GET /api/orders/:id
+ * Get a single order by ID (user must own it or be admin).
+ */
+exports.getOrderById = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found.' });
+    }
+    // If user is logged in, ensure they own it or are admin
+    if (req.user) {
+      if (req.user.role !== 'admin' && order.userId && order.userId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ error: 'Unauthorized access to this order.' });
+      }
+    }
+    res.json(order);
+  } catch (error) {
+    console.error('Error fetching order:', error);
+    res.status(500).json({ error: 'Failed to fetch order.' });
+  }
+};
