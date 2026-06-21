@@ -22,4 +22,10 @@ router.get('/', protect, orderController.getUserOrders);
 // Public: get a specific order by ID (for status page – guests allowed)
 router.get('/:id', orderController.getOrderById);
 
+// Public: get orders by phone number (for tracking)
+router.get('/by-phone', orderController.getOrdersByPhone);
+
+// Public: get orders by transaction reference (for tracking)
+router.get('/by-reference', orderController.getOrdersByReference);
+
 module.exports = router;
