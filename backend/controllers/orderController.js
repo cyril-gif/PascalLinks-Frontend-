@@ -3,6 +3,7 @@
  * ------------------------------------------------
  * Handles order creation, confirmation, retrieval,
  * and tracking with live status sync from DataMart.
+ * Uses provider‑specific markup.
  */
 
 const Order = require('../models/Order');
@@ -14,10 +15,16 @@ const paystackService = require('../services/paystackService');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 
-const MARKUP_PERCENTAGE = 21.05;
-const applyMarkup = (basePrice) => basePrice * (1 + MARKUP_PERCENTAGE / 100);
+// Provider‑specific markups
+const MARKUP_DATAMART = 22.5;
+const MARKUP_GIGSGRID = 20.0;
 
-// ----- Helper to map DataMart status -----
+const applyMarkup = (basePrice, provider) => {
+  const percentage = provider === 'datamart' ? MARKUP_DATAMART : MARKUP_GIGSGRID;
+  return basePrice * (1 + percentage / 100);
+};
+
+// Helper: map DataMart status
 function mapDataMartStatus(dmStatus) {
   const map = {
     'pending': 'pending_payment',
@@ -55,7 +62,7 @@ exports.initiateOrder = async (req, res) => {
       return res.status(409).json({ error: 'Duplicate order. Please wait 2 minutes.' });
     }
 
-    // Get plans from the chosen provider
+    // Get plans from chosen provider
     let plans = [];
     let usedProvider = provider || 'datamart';
 
@@ -68,7 +75,7 @@ exports.initiateOrder = async (req, res) => {
     }
 
     if (!plans || plans.length === 0) {
-      // fallback to the other provider
+      // fallback to other provider
       if (usedProvider === 'datamart') {
         plans = await gigsgridService.getPlans(network);
         usedProvider = 'gigsgrid';
@@ -88,7 +95,8 @@ exports.initiateOrder = async (req, res) => {
     }
 
     const basePrice = plan.price;
-    const sellingPrice = applyMarkup(basePrice);
+    // Apply markup based on the provider being used
+    const sellingPrice = applyMarkup(basePrice, usedProvider);
 
     // Optional user association
     let userId = null;
@@ -102,7 +110,6 @@ exports.initiateOrder = async (req, res) => {
       }
     } catch (_) { /* guest */ }
 
-    // Create order
     const order = new Order({
       userId,
       network,
@@ -153,7 +160,7 @@ exports.initiateOrder = async (req, res) => {
   }
 };
 
-// ----- POST /api/orders/confirm -----
+// ----- POST /api/orders/confirm (unchanged) -----
 exports.confirmPayment = async (req, res) => {
   try {
     const { reference } = req.body;
