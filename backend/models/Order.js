@@ -70,6 +70,20 @@ const OrderSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: null,
     },
+    // Add to Order schema
+provider: {
+  type: String,
+  enum: ['datamart', 'gigsgrid'],
+  default: 'datamart',
+},
+providerOrderId: {
+  type: String,
+  sparse: true,
+},
+providerResponse: {
+  type: mongoose.Schema.Types.Mixed,
+  default: null,
+},
     // Error messages if any
     errorMessage: {
       type: String,
