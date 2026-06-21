@@ -17,7 +17,7 @@ const jwt = require('jsonwebtoken');
 
 // Provider‑specific markups
 const MARKUP_DATAMART = 22.5;
-const MARKUP_GIGSGRID = 20.0;
+const MARKUP_GIGSGRID = 23.6842;
 
 const applyMarkup = (basePrice, provider) => {
   const percentage = provider === 'datamart' ? MARKUP_DATAMART : MARKUP_GIGSGRID;
