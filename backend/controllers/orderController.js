@@ -1,8 +1,8 @@
 /**
  * controllers/orderController.js
  * ------------------------------------------------
- * Handles order creation, payment confirmation, retrieval,
- * and tracking with live status sync from DataMart.
+ * Complete version with order creation, confirmation,
+ * user orders, tracking by phone / reference, and live DataMart sync.
  */
 
 const Order = require('../models/Order');
@@ -16,13 +16,22 @@ const jwt = require('jsonwebtoken');
 
 const MARKUP_PERCENTAGE = 21.05;
 
-const applyMarkup = (basePrice) => {
-  return basePrice * (1 + MARKUP_PERCENTAGE / 100);
-};
+const applyMarkup = (basePrice) => basePrice * (1 + MARKUP_PERCENTAGE / 100);
 
-/**
- * POST /api/orders/initiate
- */
+// ----- Helper to map DataMart status -----
+function mapDataMartStatus(dmStatus) {
+  const map = {
+    'pending': 'pending_payment',
+    'processing': 'processing',
+    'delivered': 'completed',
+    'completed': 'completed',
+    'failed': 'failed',
+    'cancelled': 'failed'
+  };
+  return map[dmStatus?.toLowerCase()] || null;
+}
+
+// ----- POST /api/orders/initiate -----
 exports.initiateOrder = async (req, res) => {
   try {
     const { network, package_size, beneficiary } = req.body;
@@ -36,6 +45,7 @@ exports.initiateOrder = async (req, res) => {
       return res.status(400).json({ error: 'Invalid phone number.' });
     }
 
+    // Duplicate check (2 min)
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const recentOrder = await Order.findOne({
       beneficiary,
@@ -43,11 +53,10 @@ exports.initiateOrder = async (req, res) => {
       status: { $in: ['pending_payment', 'processing', 'completed'] },
     });
     if (recentOrder) {
-      return res.status(409).json({
-        error: 'Duplicate order detected. Please wait 2 minutes.',
-      });
+      return res.status(409).json({ error: 'Duplicate order. Please wait 2 minutes.' });
     }
 
+    // Get plans (DataMart first, fallback Gigsgrid)
     let plans = [];
     let provider = 'datamart';
     try {
@@ -67,6 +76,7 @@ exports.initiateOrder = async (req, res) => {
     const basePrice = plan.price;
     const sellingPrice = applyMarkup(basePrice);
 
+    // Optional user association
     let userId = null;
     try {
       const authHeader = req.headers.authorization;
@@ -76,10 +86,9 @@ exports.initiateOrder = async (req, res) => {
         const user = await User.findById(decoded.id).select('-password');
         if (user) userId = user._id;
       }
-    } catch (error) {
-      // silent – guest checkout
-    }
+    } catch (_) { /* guest */ }
 
+    // Create order
     const order = new Order({
       userId,
       network,
@@ -92,6 +101,7 @@ exports.initiateOrder = async (req, res) => {
     });
     await order.save();
 
+    // Paystack init
     const transactionRef = uuidv4();
     const amountInPesewas = Math.round(sellingPrice * 100);
 
@@ -125,16 +135,11 @@ exports.initiateOrder = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Initiate order error:', error.message);
-    res.status(500).json({
-      error: 'Failed to initiate order. Please try again.',
-      details: error.message,
-    });
+    res.status(500).json({ error: 'Failed to initiate order.', details: error.message });
   }
 };
 
-/**
- * POST /api/orders/confirm
- */
+// ----- POST /api/orders/confirm -----
 exports.confirmPayment = async (req, res) => {
   try {
     const { reference } = req.body;
@@ -172,7 +177,6 @@ exports.confirmPayment = async (req, res) => {
         });
       }
 
-      // Store the DataMart reference (e.g., "MN-...")
       order.providerOrderId = providerResult.order_id || providerResult.reference || 'N/A';
       order.status = 'processing';
       order.providerResponse = providerResult;
@@ -182,17 +186,14 @@ exports.confirmPayment = async (req, res) => {
         success: true,
         orderId: order._id,
         providerOrderId: order.providerOrderId,
-        provider: provider,
+        provider,
       });
     } catch (error) {
       console.error(`❌ ${provider} order placement failed:`, error.message);
       order.status = 'failed';
       order.errorMessage = error.message;
       await order.save();
-      res.status(500).json({
-        error: 'Order placement failed. Please contact support.',
-        details: error.message,
-      });
+      res.status(500).json({ error: 'Order placement failed.', details: error.message });
     }
   } catch (error) {
     console.error('❌ Confirm payment error:', error.message);
@@ -200,160 +201,105 @@ exports.confirmPayment = async (req, res) => {
   }
 };
 
-/**
- * GET /api/orders
- */
+// ----- GET /api/orders (protected) -----
 exports.getUserOrders = async (req, res) => {
   try {
-    const userId = req.user._id;
-    const orders = await Order.find({ userId }).sort({ createdAt: -1 });
+    const orders = await Order.find({ userId: req.user._id }).sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
-    console.error('Error fetching user orders:', error);
     res.status(500).json({ error: 'Failed to fetch orders.' });
   }
 };
 
-/**
- * GET /api/orders/:id
- */
+// ----- GET /api/orders/:id (public) -----
 exports.getOrderById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found.' });
-    }
-    if (req.user) {
-      if (req.user.role !== 'admin' && order.userId && order.userId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({ error: 'Unauthorized access to this order.' });
-      }
-    }
-    // Optionally sync live status if DataMart
-    if (order.provider === 'datamart' && order.providerOrderId && order.status !== 'completed' && order.status !== 'failed') {
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+
+    // Optional DataMart sync
+    if (order.provider === 'datamart' && order.providerOrderId && !['completed','failed'].includes(order.status)) {
       try {
         const dmStatus = await datamartService.checkOrderStatus(order.providerOrderId);
-        if (dmStatus && dmStatus.status) {
+        if (dmStatus?.status) {
           const newStatus = mapDataMartStatus(dmStatus.status);
           if (newStatus && newStatus !== order.status) {
             order.status = newStatus;
             await order.save();
           }
         }
-      } catch (error) {
-        console.warn('⚠️ Could not sync DataMart status:', error.message);
-      }
+      } catch (_) { /* ignore */ }
     }
+
     res.json(order);
   } catch (error) {
-    console.error('Error fetching order:', error);
     res.status(500).json({ error: 'Failed to fetch order.' });
   }
 };
 
-/**
- * GET /api/orders/by-phone
- */
+// ----- GET /api/orders/by-phone (public tracking) -----
 exports.getOrdersByPhone = async (req, res) => {
   try {
     const { phone } = req.query;
-    if (!phone) {
-      return res.status(400).json({ error: 'Phone number is required' });
-    }
-    const phoneRegex = /^0\d{9}$/;
-    if (!phoneRegex.test(phone)) {
-      return res.status(400).json({ error: 'Invalid phone number format' });
+    if (!phone) return res.status(400).json({ error: 'Phone number is required' });
+    const cleaned = phone.trim().replace(/\s/g, '');
+    if (!/^0\d{9}$/.test(cleaned)) {
+      return res.status(400).json({ error: 'Invalid phone format. Use 10-digit Ghana number.' });
     }
 
-    let orders = await Order.find({ beneficiary: phone })
-      .sort({ createdAt: -1 })
-      .limit(20);
+    let orders = await Order.find({ beneficiary: cleaned }).sort({ createdAt: -1 }).limit(20);
+    if (orders.length === 0) return res.status(404).json({ error: 'No orders found for this phone.' });
 
-    if (orders.length === 0) {
-      return res.status(404).json({ error: 'No orders found for this phone number' });
-    }
-
-    // Sync live status for DataMart orders that are not final
-    let updated = false;
-    for (let order of orders) {
-      if (order.provider === 'datamart' && order.providerOrderId && order.status !== 'completed' && order.status !== 'failed') {
+    // Sync DataMart status for non‑final orders
+    for (const order of orders) {
+      if (order.provider === 'datamart' && order.providerOrderId && !['completed','failed'].includes(order.status)) {
         try {
           const dmStatus = await datamartService.checkOrderStatus(order.providerOrderId);
-          if (dmStatus && dmStatus.status) {
+          if (dmStatus?.status) {
             const newStatus = mapDataMartStatus(dmStatus.status);
             if (newStatus && newStatus !== order.status) {
               order.status = newStatus;
               await order.save();
-              updated = true;
             }
           }
-        } catch (error) {
-          console.warn(`⚠️ Could not sync DataMart status for order ${order._id}:`, error.message);
-        }
+        } catch (_) { /* ignore */ }
       }
     }
 
-    if (updated) {
-      orders = await Order.find({ beneficiary: phone })
-        .sort({ createdAt: -1 })
-        .limit(20);
-    }
-
+    // Re‑fetch to reflect updates
+    orders = await Order.find({ beneficiary: cleaned }).sort({ createdAt: -1 }).limit(20);
     res.json(orders);
   } catch (error) {
-    console.error('Error fetching orders by phone:', error);
-    res.status(500).json({ error: 'Failed to fetch orders' });
+    console.error('Error in by-phone:', error);
+    res.status(500).json({ error: 'Failed to fetch orders.' });
   }
 };
 
-/**
- * GET /api/orders/by-reference
- */
+// ----- GET /api/orders/by-reference (public tracking) -----
 exports.getOrdersByReference = async (req, res) => {
   try {
     const { reference } = req.query;
-    if (!reference) {
-      return res.status(400).json({ error: 'Reference is required' });
-    }
+    if (!reference) return res.status(400).json({ error: 'Reference is required' });
 
-    const order = await Order.findOne({ transactionRef: reference });
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found with this reference' });
-    }
+    const order = await Order.findOne({ transactionRef: reference.trim() });
+    if (!order) return res.status(404).json({ error: 'Order not found with this reference.' });
 
-    // Sync live status if DataMart
-    if (order.provider === 'datamart' && order.providerOrderId && order.status !== 'completed' && order.status !== 'failed') {
+    if (order.provider === 'datamart' && order.providerOrderId && !['completed','failed'].includes(order.status)) {
       try {
         const dmStatus = await datamartService.checkOrderStatus(order.providerOrderId);
-        if (dmStatus && dmStatus.status) {
+        if (dmStatus?.status) {
           const newStatus = mapDataMartStatus(dmStatus.status);
           if (newStatus && newStatus !== order.status) {
             order.status = newStatus;
             await order.save();
           }
         }
-      } catch (error) {
-        console.warn('⚠️ Could not sync DataMart status:', error.message);
-      }
+      } catch (_) { /* ignore */ }
     }
 
     res.json(order);
   } catch (error) {
-    console.error('Error fetching order by reference:', error);
-    res.status(500).json({ error: 'Failed to fetch order' });
+    console.error('Error in by-reference:', error);
+    res.status(500).json({ error: 'Failed to fetch order.' });
   }
 };
-
-/**
- * Helper to map DataMart status to our internal statuses.
- */
-function mapDataMartStatus(dmStatus) {
-  const statusMap = {
-    'pending': 'pending_payment',
-    'processing': 'processing',
-    'delivered': 'completed',
-    'completed': 'completed',
-    'failed': 'failed',
-    'cancelled': 'failed',
-  };
-  return statusMap[dmStatus.toLowerCase()] || null;
-}
