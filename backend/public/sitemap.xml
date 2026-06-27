@@ -3,7 +3,7 @@
   
   <!-- Homepage -->
   <url>
-    <loc>https://pascallinks.com/</loc>
+    <loc>https://pascallinks.vercel.app/</loc>
     <lastmod>2026-06-27</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
@@ -11,7 +11,7 @@
 
   <!-- Purchase / Data Bundles -->
   <url>
-    <loc>https://pascallinks.com/index.html</loc>
+    <loc>https://pascallinks.vercel.app/index.html</loc>
     <lastmod>2026-06-27</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
@@ -19,7 +19,7 @@
 
   <!-- Dashboard (user area) -->
   <url>
-    <loc>https://pascallinks.com/dashboard.html</loc>
+    <loc>https://pascallinks.vercel.app/dashboard.html</loc>
     <lastmod>2026-06-27</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
@@ -27,7 +27,7 @@
 
   <!-- Login -->
   <url>
-    <loc>https://pascallinks.com/login.html</loc>
+    <loc>https://pascallinks.vercel.app/login.html</loc>
     <lastmod>2026-06-27</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
@@ -35,7 +35,7 @@
 
   <!-- Register -->
   <url>
-    <loc>https://pascallinks.com/register.html</loc>
+    <loc>https://pascallinks.vercel.app/register.html</loc>
     <lastmod>2026-06-27</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
@@ -43,7 +43,7 @@
 
   <!-- Payment Callback (after Paystack) -->
   <url>
-    <loc>https://pascallinks.com/payment-callback.html</loc>
+    <loc>https://pascallinks.vercel.app/payment-callback.html</loc>
     <lastmod>2026-06-27</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.4</priority>
@@ -51,7 +51,7 @@
 
   <!-- Order Status -->
   <url>
-    <loc>https://pascallinks.com/order-status.html</loc>
+    <loc>https://pascallinks.vercel.app/order-status.html</loc>
     <lastmod>2026-06-27</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.6</priority>
@@ -59,7 +59,7 @@
 
   <!-- Admin panel (only for admins, but we include it) -->
   <url>
-    <loc>https://pascallinks.com/admin.html</loc>
+    <loc>https://pascallinks.vercel.app/admin.html</loc>
     <lastmod>2026-06-27</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.3</priority>
