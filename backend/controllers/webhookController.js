@@ -30,10 +30,14 @@ function verifyDataMartSignature(payload, signature, secret) {
 function mapDataMartStatus(dmStatus) {
   const map = {
     'created': 'pending_payment',
+    'pending': 'pending_payment',
+    'waiting': 'processing',
     'processing': 'processing',
     'completed': 'completed',
+    'delivered': 'completed',
     'failed': 'failed',
-    'refunded': 'failed',
+    'cancelled': 'failed',
+    'refunded': 'failed'
   };
   return map[dmStatus?.toLowerCase()] || null;
 }
@@ -64,7 +68,7 @@ exports.handleDataMartWebhook = async (req, res) => {
 
     // Extract data
     const data = payload.data || payload;
-    const orderReference = data.orderReference || data.reference;
+    const orderReference = data.orderReference || data.reference || data.orderId;
     const status = data.status || data.orderStatus;
 
     if (!orderReference) {
@@ -72,12 +76,16 @@ exports.handleDataMartWebhook = async (req, res) => {
       return;
     }
 
+    console.log(`🔍 Looking for order with providerOrderId: ${orderReference}`);
+
     // Find order by providerOrderId
     const order = await Order.findOne({ providerOrderId: orderReference });
     if (!order) {
       console.error(`❌ Order with providerOrderId ${orderReference} not found`);
       return;
     }
+
+    console.log(`✅ Found order: ${order._id}, current status: ${order.status}`);
 
     // Map status
     const newStatus = mapDataMartStatus(status);
