@@ -33,7 +33,8 @@ function mapDataMartStatus(dmStatus) {
     'completed': 'completed',
     'delivered': 'completed',
     'failed': 'failed',
-    'cancelled': 'failed'
+    'cancelled': 'failed',
+    'refunded': 'failed'
   };
   return map[dmStatus?.toLowerCase()] || null;
 }
@@ -192,12 +193,25 @@ exports.confirmPayment = async (req, res) => {
           network_type: order.network,
         });
 
-        // ✅ Use DATAMART's actual status
+        console.log('📦 DATAMART response:', JSON.stringify(providerResult, null, 2));
+
+        // Extract orderReference correctly
+        const orderReference = providerResult?.data?.orderReference || 
+                               providerResult?.orderReference || 
+                               providerResult?.order_id;
+        
+        if (orderReference) {
+          order.providerOrderId = orderReference;
+          console.log(`✅ Saved providerOrderId: ${orderReference}`);
+        } else {
+          console.error('❌ No orderReference in DATAMART response');
+          throw new Error('DATAMART did not return an order reference');
+        }
+
+        // Map status
         const dmStatus = providerResult?.data?.orderStatus || providerResult?.status;
         const mappedStatus = mapDataMartStatus(dmStatus) || 'processing';
-
         order.status = mappedStatus;
-        order.providerOrderId = providerResult?.data?.orderReference || providerResult?.order_id || 'N/A';
         order.providerResponse = providerResult;
         await order.save();
 
