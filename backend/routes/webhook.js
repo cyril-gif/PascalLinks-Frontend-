@@ -1,16 +1,18 @@
 /**
  * routes/webhook.js
  * ------------------------------------------------
- * Webhook endpoint to receive callbacks from Gigsgrid.
- * Updates order status in MongoDB and logs the payload.
- * No authentication required (but we verify a secret if provided).
+ * Webhook endpoints for Gigsgrid and DATAMART.
+ * No authentication required (signature verification happens inside).
  */
 
 const express = require('express');
 const router = express.Router();
 const webhookController = require('../controllers/webhookController');
 
-// POST /api/webhook/gigsgrid
+// DATAMART webhook (primary)
+router.post('/datamart', webhookController.handleDataMartWebhook);
+
+// Gigsgrid webhook (fallback)
 router.post('/gigsgrid', webhookController.handleGigsgridWebhook);
 
 module.exports = router;
