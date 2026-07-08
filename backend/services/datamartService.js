@@ -16,7 +16,7 @@ const NETWORK_MAP = {
   mtn: 'YELLO',
   telecel: 'TELECEL',
   airtel_tigo: 'AT_PREMIUM',
-  bigtime: 'YELLO', // Bigtime uses MTN network
+  bigtime: 'YELLO',
 };
 
 // Reverse mapping
@@ -31,7 +31,6 @@ const REVERSE_NETWORK_MAP = {
  * The 'capacity' field is what you send in the API call.
  */
 const DATAMART_PACKAGES = {
-  // MTN (YELLO)
   mtn: [
     { package_size: '1GB', price: 4.00, name: '1GB', capacity: '1' },
     { package_size: '2GB', price: 8.00, name: '2GB', capacity: '2' },
@@ -49,7 +48,6 @@ const DATAMART_PACKAGES = {
     { package_size: '50GB', price: 185.00, name: '50GB', capacity: '50' },
     { package_size: '100GB', price: 407.00, name: '100GB', capacity: '100' },
   ],
-  // AirtelTigo (AT_PREMIUM)
   airtel_tigo: [
     { package_size: '1GB', price: 3.95, name: '1GB', capacity: '1' },
     { package_size: '2GB', price: 8.35, name: '2GB', capacity: '2' },
@@ -66,7 +64,6 @@ const DATAMART_PACKAGES = {
     { package_size: '40GB', price: 151.00, name: '40GB', capacity: '40' },
     { package_size: '50GB', price: 190.00, name: '50GB', capacity: '50' },
   ],
-  // Telecel
   telecel: [
     { package_size: '5GB', price: 19.50, name: '5GB', capacity: '5' },
     { package_size: '8GB', price: 34.64, name: '8GB', capacity: '8' },
@@ -80,7 +77,6 @@ const DATAMART_PACKAGES = {
     { package_size: '50GB', price: 171.50, name: '50GB', capacity: '50' },
     { package_size: '100GB', price: 341.00, name: '100GB', capacity: '100' },
   ],
-  // Bigtime – uses YELLO (MTN) network
   bigtime: [
     { package_size: '1GB', price: 4.00, name: '1GB', capacity: '1' },
     { package_size: '2GB', price: 8.00, name: '2GB', capacity: '2' },
@@ -122,11 +118,10 @@ class DataMartService {
       const response = await axios(config);
       return response.data;
     } catch (error) {
-      console.error(`❌ DataMart API error (${endpoint}):`, {
-        status: error.response?.status,
-        data: error.response?.data,
-      });
-      throw new Error(`DataMart API error: ${error.response?.data?.message || error.message}`);
+      console.error(`❌ DATAMART API error (${endpoint}):`);
+      console.error('Status:', error.response?.status);
+      console.error('Data:', JSON.stringify(error.response?.data, null, 2));
+      throw new Error(`DATAMART API error: ${error.response?.data?.message || error.message}`);
     }
   }
 
@@ -148,28 +143,39 @@ class DataMartService {
   /**
    * Purchase a data bundle.
    * POST /purchase
-   * Body: { phoneNumber, network, capacity, gateway: "wallet" }
    */
   async purchaseData(orderData) {
-    // Find the correct capacity value for the package_size
     const networkPlans = DATAMART_PACKAGES[orderData.network_type] || DATAMART_PACKAGES.mtn;
     const plan = networkPlans.find(p => p.package_size === orderData.package_size);
     const capacity = plan ? plan.capacity : orderData.package_size.replace('GB', '').trim();
 
+    // Convert phone: 0241234567 → 233241234567
+    let phone = orderData.beneficiary.trim();
+    if (phone.startsWith('0')) {
+      phone = '233' + phone.substring(1);
+    }
+
     const payload = {
-      phoneNumber: orderData.beneficiary,
+      phoneNumber: phone,
       network: NETWORK_MAP[orderData.network_type] || orderData.network_type,
-      capacity: capacity,
+      capacity: String(capacity),
       gateway: 'wallet',
     };
 
-    console.log('📦 DataMart purchase payload:', payload);
+    console.log('📦 DATAMART purchase payload:', JSON.stringify(payload, null, 2));
 
-    return this._request('/purchase', {
-      method: 'POST',
-      data: payload,
-      idempotencyKey: orderData.idempotencyKey || this._generateIdempotencyKey(),
-    });
+    try {
+      const result = await this._request('/purchase', {
+        method: 'POST',
+        data: payload,
+        idempotencyKey: orderData.idempotencyKey || this._generateIdempotencyKey(),
+      });
+      console.log('✅ DATAMART purchase response:', JSON.stringify(result, null, 2));
+      return result;
+    } catch (error) {
+      console.error('❌ DATAMART purchase error:', error.message);
+      throw error;
+    }
   }
 
   /**
@@ -182,10 +188,15 @@ class DataMartService {
       const plan = networkPlans.find(p => p.package_size === order.package_size);
       const capacity = plan ? plan.capacity : order.package_size.replace('GB', '').trim();
 
+      let phone = order.beneficiary.trim();
+      if (phone.startsWith('0')) {
+        phone = '233' + phone.substring(1);
+      }
+
       return {
-        phoneNumber: order.beneficiary,
+        phoneNumber: phone,
         network: NETWORK_MAP[order.network_type] || order.network_type,
-        capacity: capacity,
+        capacity: String(capacity),
         gateway: 'wallet',
       };
     });
