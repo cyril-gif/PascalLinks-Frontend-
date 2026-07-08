@@ -24,13 +24,14 @@ const applyMarkup = (basePrice, provider) => {
   return basePrice * (1 + percentage / 100);
 };
 
-// Helper: map DataMart status
+// Helper: map DataMart status to internal status
 function mapDataMartStatus(dmStatus) {
   const map = {
     'pending': 'pending_payment',
+    'waiting': 'processing',
     'processing': 'processing',
-    'delivered': 'completed',
     'completed': 'completed',
+    'delivered': 'completed',
     'failed': 'failed',
     'cancelled': 'failed'
   };
@@ -161,7 +162,7 @@ exports.initiateOrder = async (req, res) => {
   }
 };
 
-// ----- POST /api/orders/confirm (unchanged) -----
+// ----- POST /api/orders/confirm -----
 exports.confirmPayment = async (req, res) => {
   try {
     const { reference } = req.body;
@@ -190,25 +191,37 @@ exports.confirmPayment = async (req, res) => {
           package_size: order.package_size,
           network_type: order.network,
         });
+
+        // ✅ Use DATAMART's actual status
+        const dmStatus = providerResult?.data?.orderStatus || providerResult?.status;
+        const mappedStatus = mapDataMartStatus(dmStatus) || 'processing';
+
+        order.status = mappedStatus;
+        order.providerOrderId = providerResult?.data?.orderReference || providerResult?.order_id || 'N/A';
+        order.providerResponse = providerResult;
+        await order.save();
+
       } else {
+        // Gigsgrid
         providerResult = await gigsgridService.createOrder({
           beneficiary: order.beneficiary,
           package_size: order.package_size,
           network_type: order.network,
           webhook_url: `${process.env.BACKEND_URL}/api/webhook/gigsgrid`,
         });
-      }
 
-      order.providerOrderId = providerResult.order_id || providerResult.reference || 'N/A';
-      order.status = 'processing';
-      order.providerResponse = providerResult;
-      await order.save();
+        order.providerOrderId = providerResult.order_id || 'N/A';
+        order.status = 'processing';
+        order.providerResponse = providerResult;
+        await order.save();
+      }
 
       res.status(200).json({
         success: true,
         orderId: order._id,
         providerOrderId: order.providerOrderId,
         provider,
+        status: order.status,
       });
     } catch (error) {
       console.error(`❌ ${provider} order placement failed:`, error.message);
