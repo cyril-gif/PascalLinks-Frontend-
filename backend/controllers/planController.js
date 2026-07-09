@@ -2,6 +2,8 @@
  * controllers/planController.js
  * ------------------------------------------------
  * Fetches plans for a given network + provider.
+ * PRIMARY: DATAMART
+ * FALLBACK: Gigsgrid
  * Applies provider‑specific markup to base prices.
  * Restricts Gigsgrid to MTN only.
  */
@@ -29,8 +31,11 @@ exports.getPlans = async (req, res) => {
     const { network } = req.params;
     const { provider } = req.query;
 
+    // Default to datamart if no provider specified
+    let usedProvider = provider || 'datamart';
+
     // Restrict Gigsgrid to MTN only
-    if (provider === 'gigsgrid' && network !== 'mtn') {
+    if (usedProvider === 'gigsgrid' && network !== 'mtn') {
       return res.status(400).json({ error: 'Gigsgrid only supports MTN network.' });
     }
 
@@ -40,32 +45,48 @@ exports.getPlans = async (req, res) => {
     }
 
     let plans = [];
-    let usedProvider = provider || 'datamart';
 
+    // PRIMARY: Try DATAMART first (always)
     if (usedProvider === 'datamart') {
-      plans = await datamartService.getPlans(network);
+      try {
+        plans = await datamartService.getPlans(network);
+        console.log(`✅ DATAMART plans loaded for ${network}`);
+      } catch (error) {
+        console.warn(`⚠️ DATAMART plans failed for ${network}:`, error.message);
+        // FALLBACK: Try Gigsgrid if DATAMART fails
+        try {
+          plans = await gigsgridService.getPlans(network);
+          usedProvider = 'gigsgrid';
+          console.log(`✅ FALLBACK: Gigsgrid plans loaded for ${network}`);
+        } catch (fallbackError) {
+          console.warn(`⚠️ Gigsgrid fallback also failed:`, fallbackError.message);
+        }
+      }
     } else if (usedProvider === 'gigsgrid') {
-      plans = await gigsgridService.getPlans(network);
+      // If user explicitly requested Gigsgrid
+      try {
+        plans = await gigsgridService.getPlans(network);
+        console.log(`✅ Gigsgrid plans loaded for ${network}`);
+      } catch (error) {
+        console.warn(`⚠️ Gigsgrid plans failed:`, error.message);
+        // Try DATAMART as fallback
+        try {
+          plans = await datamartService.getPlans(network);
+          usedProvider = 'datamart';
+          console.log(`✅ FALLBACK: DATAMART plans loaded for ${network}`);
+        } catch (fallbackError) {
+          console.warn(`⚠️ DATAMART fallback also failed:`, fallbackError.message);
+        }
+      }
     } else {
       return res.status(400).json({ error: 'Invalid provider. Use datamart or gigsgrid.' });
     }
 
-    // Fallback if no plans from chosen provider
-    if (!plans || plans.length === 0) {
-      console.warn(`⚠️ No plans from ${usedProvider}, trying fallback`);
-      if (usedProvider === 'datamart') {
-        plans = await gigsgridService.getPlans(network);
-        usedProvider = 'gigsgrid';
-      } else {
-        plans = await datamartService.getPlans(network);
-        usedProvider = 'datamart';
-      }
-    }
-
+    // If still no plans, use mock data
     if (!plans || plans.length === 0) {
       console.warn('⚠️ All providers failed, using mock data');
       plans = datamartService.getMockPlans ? datamartService.getMockPlans(network) : [];
-      usedProvider = 'datamart'; // fallback to DataMart mock
+      usedProvider = 'datamart';
     }
 
     // Apply provider‑specific markup
