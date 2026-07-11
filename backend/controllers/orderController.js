@@ -165,71 +165,79 @@ exports.initiateOrder = async (req, res) => {
 
 // ----- POST /api/orders/confirm -----
 exports.confirmPayment = async (req, res) => {
+  console.log('🔔 confirmPayment called with body:', req.body);
+
   try {
     const { reference } = req.body;
 
+    if (!reference) {
+      console.error('❌ No reference provided');
+      return res.status(400).json({ error: 'No reference provided' });
+    }
+
+    console.log(`🔍 Verifying Paystack transaction: ${reference}`);
+
     const verification = await paystackService.verifyTransaction(reference);
     if (!verification.status || verification.data.status !== 'success') {
+      console.error('❌ Paystack verification failed:', verification);
       await Transaction.findOneAndUpdate({ reference }, { status: 'failed' });
       await Order.findOneAndUpdate({ transactionRef: reference }, { status: 'payment_failed' });
       return res.status(400).json({ error: 'Payment not successful.' });
     }
 
+    console.log('✅ Paystack verification successful');
+
     await Transaction.findOneAndUpdate({ reference }, { status: 'success' });
 
     const order = await Order.findOne({ transactionRef: reference });
     if (!order) {
+      console.error(`❌ Order not found for reference: ${reference}`);
       return res.status(404).json({ error: 'Order not found.' });
     }
 
-    const provider = order.provider || 'datamart';
+    console.log(`✅ Order found: ${order._id}, provider: ${order.provider}`);
+
+    // ✅ FORCE DATAMART – ignore stored provider
+    const provider = 'datamart';
     let providerResult;
 
     try {
-      if (provider === 'datamart') {
-        providerResult = await datamartService.purchaseData({
-          beneficiary: order.beneficiary,
-          package_size: order.package_size,
-          network_type: order.network,
-        });
+      console.log(`📦 Calling DATAMART purchase for order ${order._id}`);
+      console.log(`   Beneficiary: ${order.beneficiary}`);
+      console.log(`   Package: ${order.package_size}`);
+      console.log(`   Network: ${order.network}`);
 
-        console.log('📦 DATAMART response:', JSON.stringify(providerResult, null, 2));
+      // Log the exact payload
+      const payload = {
+        beneficiary: order.beneficiary,
+        package_size: order.package_size,
+        network_type: order.network,
+      };
+      console.log('📦 DATAMART payload:', JSON.stringify(payload, null, 2));
 
-        // Extract orderReference correctly
-        const orderReference = providerResult?.data?.orderReference || 
-                               providerResult?.orderReference || 
-                               providerResult?.order_id;
-        
-        if (orderReference) {
-          order.providerOrderId = orderReference;
-          console.log(`✅ Saved providerOrderId: ${orderReference}`);
-        } else {
-          console.error('❌ No orderReference in DATAMART response');
-          throw new Error('DATAMART did not return an order reference');
-        }
+      providerResult = await datamartService.purchaseData(payload);
 
-        // Map status
-        const dmStatus = providerResult?.data?.orderStatus || providerResult?.status;
-        const mappedStatus = mapDataMartStatus(dmStatus) || 'processing';
-        order.status = mappedStatus;
-        order.providerResponse = providerResult;
-        await order.save();
+      console.log('✅ DATAMART response:', JSON.stringify(providerResult, null, 2));
 
+      const orderReference = providerResult?.data?.orderReference || 
+                             providerResult?.orderReference || 
+                             providerResult?.order_id;
+      
+      if (orderReference) {
+        order.providerOrderId = orderReference;
+        console.log(`✅ Saved providerOrderId: ${orderReference}`);
       } else {
-        // Gigsgrid
-        providerResult = await gigsgridService.createOrder({
-          beneficiary: order.beneficiary,
-          package_size: order.package_size,
-          network_type: order.network,
-          webhook_url: `${process.env.BACKEND_URL}/api/webhook/gigsgrid`,
-        });
-
-        order.providerOrderId = providerResult.order_id || 'N/A';
-        order.status = 'processing';
-        order.providerResponse = providerResult;
-        await order.save();
+        console.error('❌ No orderReference in DATAMART response');
+        throw new Error('DATAMART did not return an order reference');
       }
 
+      const dmStatus = providerResult?.data?.orderStatus || providerResult?.status;
+      const mappedStatus = mapDataMartStatus(dmStatus) || 'processing';
+      order.status = mappedStatus;
+      order.providerResponse = providerResult;
+      await order.save();
+
+      console.log(`✅ Order ${order._id} completed successfully`);
       res.status(200).json({
         success: true,
         orderId: order._id,
@@ -237,12 +245,19 @@ exports.confirmPayment = async (req, res) => {
         provider,
         status: order.status,
       });
+
     } catch (error) {
-      console.error(`❌ ${provider} order placement failed:`, error.message);
+      console.error(`❌ DATAMART order placement failed:`, error.message);
+      console.error('Full error:', error);
+      
       order.status = 'failed';
       order.errorMessage = error.message;
       await order.save();
-      res.status(500).json({ error: 'Order placement failed.', details: error.message });
+      
+      res.status(500).json({ 
+        error: 'Order placement failed.', 
+        details: error.message 
+      });
     }
   } catch (error) {
     console.error('❌ Confirm payment error:', error.message);
