@@ -158,8 +158,8 @@ class DataMartService {
     const payload = {
       phoneNumber: phone,
       network: NETWORK_MAP[orderData.network_type] || orderData.network_type,
-      capacity: String(capacity),
-      gateway: 'wallet',
+      capacity: String(capacity), // ✅ Ensure it's a string
+      gateway: 'wallet', // ✅ Must be "wallet"
     };
 
     console.log('📦 DATAMART purchase payload:', JSON.stringify(payload, null, 2));
